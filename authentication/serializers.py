@@ -22,16 +22,43 @@ class SignupSerializer(serializers.ModelSerializer):
             user.save()
             return user
         
-# Customizing the token to include user role as well
+# Customizing the token to include user role as well, also overriding the validate method to allow frontend to send username or email instead of just username
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    username_field = 'username_or_email'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Replace default "username" field with "username_or_email"
+        self.fields[self.username_field] = serializers.CharField()
+        self.fields["password"] = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        username_or_email = attrs.get('username_or_email')
+        password = attrs.get('password')
+
+        # Try to find user by username first 
+        user = User.objects.filter(username=username_or_email).first()
+
+        # If not found, try email
+        if user is None:
+            user = User.objects.filter(email=username_or_email).first()
+
+        if user is None:
+            raise serializers.ValidationError({"detail": "Invalid credentials"})
+
+        # Call parent with actual username (to generate JWT properly), backend still needs username field
+        data = super().validate({
+            self.username_field: user.username,
+            'password': password
+        })
+
+        # Add role to response
+        data["role"] = user.role
+        return data 
+    
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
         # Adding custon claims 
         token["role"] = user.role
         return token
-    
-    def validate(self, attrs):
-        data = super().validate(attrs)
-        data['role'] = self.user.role
-        return data
